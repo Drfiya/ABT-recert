@@ -1,10 +1,17 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
+import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import LandingPage from './LandingPage';
 import CECreditCalculator from './CECreditCalculator';
 import './index.css';
 
 ReactDOM.createRoot(document.getElementById('root')).render(
     <React.StrictMode>
-        <CECreditCalculator />
+        <BrowserRouter>
+            <Routes>
+                <Route path="/" element={<LandingPage />} />
+                <Route path="/calculator" element={<CECreditCalculator />} />
+            </Routes>
+        </BrowserRouter>
     </React.StrictMode>
 );
