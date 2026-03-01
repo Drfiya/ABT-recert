@@ -418,12 +418,12 @@ function ProgressBar({ value, max, label }) {
     );
 }
 
-function YearMiniBar({ year, credits }) {
+function YearMiniBar({ year, label, credits }) {
     const meetsMin = credits >= 10;
     const pct = Math.min(100, (credits / 20) * 100);
     return (
         <div className="flex items-center gap-2">
-            <span className="text-xs font-medium text-gray-600 w-12">Yr {year}</span>
+            <span className="text-xs font-medium text-gray-600 w-16 truncate" title={label}>{label}</span>
             <div className="flex-1 h-3 bg-gray-100 rounded-full overflow-hidden">
                 <div
                     className={`h-full rounded-full transition-all duration-300 ${meetsMin ? 'bg-abt-green' : 'bg-red-400'
@@ -463,6 +463,13 @@ export default function CECreditCalculator() {
     const [selectedActivityId, setSelectedActivityId] = useState('');
     const [quantity, setQuantity] = useState('');
     const [isFullDay, setIsFullDay] = useState(false);
+    const [description, setDescription] = useState('');
+    const [activityMonth, setActivityMonth] = useState('');
+    const [cycleStartYear, setCycleStartYear] = useState(new Date().getFullYear());
+
+    // Calendar year for the currently selected year tab
+    const calendarYear = cycleStartYear + selectedYear - 1;
+    const yearLabel = (y) => `${cycleStartYear + y - 1}`;
 
     // ── Entries (ledger) ──
     const [entries, dispatch] = useReducer(entriesReducer, []);
@@ -542,12 +549,16 @@ export default function CECreditCalculator() {
         setSelectedActivityId('');
         setQuantity('');
         setIsFullDay(false);
+        setDescription('');
+        setActivityMonth('');
     }, []);
 
     const handleActivityChange = useCallback((e) => {
         setSelectedActivityId(e.target.value);
         setQuantity('');
         setIsFullDay(false);
+        setDescription('');
+        setActivityMonth('');
     }, []);
 
     const handleAdd = useCallback(() => {
@@ -567,15 +578,69 @@ export default function CECreditCalculator() {
                 : selectedActivity.unit,
             credits: preview.credits,
             capNote: preview.capNote,
+            description: description.trim(),
+            month: activityMonth,
         };
 
         dispatch({ type: 'ADD', entry });
         setQuantity('');
-    }, [selectedActivity, quantity, preview, selectedYear, isFullDay]);
+        setDescription('');
+        setActivityMonth('');
+    }, [selectedActivity, quantity, preview, selectedYear, isFullDay, description, activityMonth]);
 
     const handleDelete = useCallback((id) => {
         dispatch({ type: 'DELETE', id });
     }, []);
+
+    /**
+     * Export all entries (across all years) as a downloadable CSV file.
+     */
+    const handleDownloadCSV = useCallback(() => {
+        if (entries.length === 0) return;
+
+        const headers = ['Year', 'Calendar Year', 'Month', 'Category', 'Activity', 'Description', 'Quantity', 'Unit', 'Credits', 'Notes'];
+        const rows = [...entries]
+            .sort((a, b) => a.year - b.year || a.categoryId - b.categoryId)
+            .map((e) => [
+                `Year ${e.year}`,
+                cycleStartYear + e.year - 1,
+                e.month || '',
+                `Category ${e.categoryId}`,
+                e.activityName,
+                e.description || '',
+                e.quantity,
+                e.unit,
+                e.credits,
+                e.capNote || '',
+            ]);
+
+        // Add summary rows
+        rows.push([]);
+        rows.push(['SUMMARY']);
+        rows.push(['Total Credits', totalCredits]);
+        for (let y = 1; y <= 5; y++) {
+            rows.push([`Year ${y} (${cycleStartYear + y - 1}) Credits`, creditsByYear[y]]);
+        }
+        CATEGORIES.forEach((cat) => {
+            rows.push([`Category ${cat.id} Credits`, creditsByCategory[cat.id]]);
+        });
+
+        const escapeCell = (val) => {
+            const str = String(val ?? '');
+            return str.includes(',') || str.includes('"') || str.includes('\n')
+                ? `"${str.replace(/"/g, '""')}"`
+                : str;
+        };
+
+        const csv = [headers, ...rows].map((row) => row.map(escapeCell).join(',')).join('\n');
+        const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `DABT_CE_Credits_${new Date().toISOString().slice(0, 10)}.csv`;
+        link.click();
+        URL.revokeObjectURL(url);
+    }, [entries, totalCredits, creditsByYear, creditsByCategory, cycleStartYear]);
 
     // ── Year diversity warnings ──
     const yearDiversityWarnings = useMemo(() => {
@@ -584,11 +649,11 @@ export default function CECreditCalculator() {
             const yearCredits = creditsByYear[y];
             const catCount = categoriesByYear[y];
             if (yearCredits > 0 && catCount < 2) {
-                warnings.push(`Year ${y}: Credits from only ${catCount} category — need at least 2`);
+                warnings.push(`Year ${y} (${cycleStartYear + y - 1}): Credits from only ${catCount} category — need at least 2`);
             }
         }
         return warnings;
-    }, [creditsByYear, categoriesByYear]);
+    }, [creditsByYear, categoriesByYear, cycleStartYear]);
 
     // ────────────────────────────────────────────────────────────────────────────
     return (
@@ -605,9 +670,23 @@ export default function CECreditCalculator() {
                                 Track your 100-credit, 5-year recertification requirement
                             </p>
                         </div>
-                        <div className="hidden sm:flex items-center gap-2 bg-navy-400/30 px-4 py-2 rounded-lg border border-white/10">
-                            <span className="text-3xl font-bold text-abt-green-light">{totalCredits}</span>
-                            <span className="text-sm text-white/70">/ 100 credits</span>
+                        <div className="hidden sm:flex items-center gap-4">
+                            <div className="flex items-center gap-2 bg-navy-400/30 px-3 py-2 rounded-lg border border-white/10">
+                                <label className="text-xs text-white/60 whitespace-nowrap">Cycle starts</label>
+                                <select
+                                    value={cycleStartYear}
+                                    onChange={(e) => setCycleStartYear(Number(e.target.value))}
+                                    className="bg-transparent text-white text-sm font-semibold border-none focus:ring-0 cursor-pointer appearance-none pr-1"
+                                >
+                                    {Array.from({ length: 15 }, (_, i) => new Date().getFullYear() - 10 + i).map((yr) => (
+                                        <option key={yr} value={yr} className="text-gray-900">{yr}</option>
+                                    ))}
+                                </select>
+                            </div>
+                            <div className="flex items-center gap-2 bg-navy-400/30 px-4 py-2 rounded-lg border border-white/10">
+                                <span className="text-3xl font-bold text-abt-green-light">{totalCredits}</span>
+                                <span className="text-sm text-white/70">/ 100 credits</span>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -624,11 +703,12 @@ export default function CECreditCalculator() {
                                     key={y}
                                     onClick={() => setSelectedYear(y)}
                                     className={`flex-1 py-2.5 px-3 rounded-lg text-sm font-semibold transition-all duration-200 ${selectedYear === y
-                                            ? 'bg-navy text-white shadow-md'
-                                            : 'text-gray-500 hover:text-navy hover:bg-navy-50'
+                                        ? 'bg-navy text-white shadow-md'
+                                        : 'text-gray-500 hover:text-navy hover:bg-navy-50'
                                         }`}
                                 >
-                                    Year {y}
+                                    <span className="block">{yearLabel(y)}</span>
+                                    <span className={`text-[10px] font-normal ${selectedYear === y ? 'text-white/60' : 'text-gray-400'}`}>Year {y}</span>
                                     {creditsByYear[y] > 0 && (
                                         <span className={`ml-1.5 text-xs px-1.5 py-0.5 rounded-full ${selectedYear === y ? 'bg-white/20' : 'bg-gray-100'
                                             }`}>
@@ -643,7 +723,7 @@ export default function CECreditCalculator() {
                         <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
                             <div className="bg-gradient-to-r from-navy to-navy-400 px-5 py-3">
                                 <h2 className="text-white font-semibold text-sm tracking-wide uppercase">
-                                    Add CE Activity — Year {selectedYear}
+                                    Add CE Activity — {calendarYear} (Year {selectedYear})
                                 </h2>
                             </div>
                             <div className="p-5 space-y-4">
@@ -714,8 +794,8 @@ export default function CECreditCalculator() {
                                                     type="button"
                                                     onClick={() => setIsFullDay(false)}
                                                     className={`px-4 py-2.5 font-medium transition-colors ${!isFullDay
-                                                            ? 'bg-navy text-white'
-                                                            : 'bg-white text-gray-600 hover:bg-gray-50'
+                                                        ? 'bg-navy text-white'
+                                                        : 'bg-white text-gray-600 hover:bg-gray-50'
                                                         }`}
                                                 >
                                                     Half Day
@@ -724,14 +804,45 @@ export default function CECreditCalculator() {
                                                     type="button"
                                                     onClick={() => setIsFullDay(true)}
                                                     className={`px-4 py-2.5 font-medium transition-colors ${isFullDay
-                                                            ? 'bg-navy text-white'
-                                                            : 'bg-white text-gray-600 hover:bg-gray-50'
+                                                        ? 'bg-navy text-white'
+                                                        : 'bg-white text-gray-600 hover:bg-gray-50'
                                                         }`}
                                                 >
                                                     Full Day
                                                 </button>
                                             </div>
                                         )}
+                                    </div>
+                                )}
+
+                                {/* Description + Month */}
+                                {selectedActivity && (
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                        <div>
+                                            <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                                                Description <span className="text-gray-400 font-normal">(optional)</span>
+                                            </label>
+                                            <input
+                                                type="text"
+                                                value={description}
+                                                onChange={(e) => setDescription(e.target.value)}
+                                                placeholder="e.g., SOT Annual Meeting, Spring 2025"
+                                                className="w-full rounded-lg border-gray-300 border px-3 py-2.5 text-sm focus:ring-2 focus:ring-navy-300 focus:border-navy transition-colors"
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                                                Month <span className="text-gray-400 font-normal">(optional)</span>
+                                            </label>
+                                            <input
+                                                type="month"
+                                                value={activityMonth}
+                                                onChange={(e) => setActivityMonth(e.target.value)}
+                                                min={`${calendarYear}-01`}
+                                                max={`${calendarYear}-12`}
+                                                className="w-full rounded-lg border-gray-300 border px-3 py-2.5 text-sm focus:ring-2 focus:ring-navy-300 focus:border-navy transition-colors"
+                                            />
+                                        </div>
                                     </div>
                                 )}
 
@@ -776,11 +887,24 @@ export default function CECreditCalculator() {
                         <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
                             <div className="bg-gradient-to-r from-navy to-navy-400 px-5 py-3 flex items-center justify-between">
                                 <h2 className="text-white font-semibold text-sm tracking-wide uppercase">
-                                    Activity Ledger — Year {selectedYear}
+                                    Activity Ledger — {calendarYear} (Year {selectedYear})
                                 </h2>
-                                <span className="text-xs text-white/60">
-                                    {yearEntries.length} {yearEntries.length === 1 ? 'entry' : 'entries'}
-                                </span>
+                                <div className="flex items-center gap-3">
+                                    <span className="text-xs text-white/60">
+                                        {yearEntries.length} {yearEntries.length === 1 ? 'entry' : 'entries'}
+                                    </span>
+                                    <button
+                                        onClick={handleDownloadCSV}
+                                        disabled={entries.length === 0}
+                                        title="Download all activities as CSV"
+                                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all duration-200 disabled:opacity-30 disabled:cursor-not-allowed bg-white/10 hover:bg-white/20 text-white border border-white/20 hover:border-white/30"
+                                    >
+                                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                                        </svg>
+                                        Export CSV
+                                    </button>
+                                </div>
                             </div>
 
                             {yearEntries.length === 0 ? (
@@ -798,6 +922,8 @@ export default function CECreditCalculator() {
                                             <tr className="bg-slate-50 border-b border-gray-200">
                                                 <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Cat</th>
                                                 <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Activity</th>
+                                                <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Description</th>
+                                                <th className="text-center px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Month</th>
                                                 <th className="text-center px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Qty</th>
                                                 <th className="text-center px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Credits</th>
                                                 <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Notes</th>
@@ -812,6 +938,12 @@ export default function CECreditCalculator() {
                                                     </td>
                                                     <td className="px-4 py-3 font-medium text-gray-800">
                                                         {entry.activityName}
+                                                    </td>
+                                                    <td className="px-4 py-3 text-sm text-gray-600 max-w-[180px] truncate" title={entry.description}>
+                                                        {entry.description || '—'}
+                                                    </td>
+                                                    <td className="px-4 py-3 text-center text-xs text-gray-500 whitespace-nowrap">
+                                                        {entry.month || '—'}
                                                     </td>
                                                     <td className="px-4 py-3 text-center text-gray-600">
                                                         {entry.quantity} {entry.unit}{entry.quantity !== 1 ? 's' : ''}
@@ -886,7 +1018,7 @@ export default function CECreditCalculator() {
                             </h3>
                             <p className="text-xs text-gray-500">Minimum 10 credits per year required</p>
                             {[1, 2, 3, 4, 5].map((y) => (
-                                <YearMiniBar key={y} year={y} credits={creditsByYear[y]} />
+                                <YearMiniBar key={y} year={y} label={yearLabel(y)} credits={creditsByYear[y]} />
                             ))}
                         </div>
 
