@@ -1,4 +1,4 @@
-import { useState, useReducer, useMemo, useCallback } from 'react';
+import { useState, useReducer, useMemo, useCallback, useEffect } from 'react';
 
 // ─── DATA MODEL ────────────────────────────────────────────────────────────────
 // Each activity: { id, name, credits, unit, capType, capValue, capLabel }
@@ -301,6 +301,29 @@ const ACTIVITIES = [
 
 // ─── HELPERS ───────────────────────────────────────────────────────────────────
 
+const STORAGE_KEY_ENTRIES = 'dabt-recert-entries';
+const STORAGE_KEY_CYCLE_START = 'dabt-recert-cycle-start';
+
+/** Load saved entries from localStorage, or return an empty array. */
+function loadSavedEntries() {
+    try {
+        const raw = localStorage.getItem(STORAGE_KEY_ENTRIES);
+        return raw ? JSON.parse(raw) : [];
+    } catch {
+        return [];
+    }
+}
+
+/** Load saved cycle start year, or return current year. */
+function loadCycleStartYear() {
+    try {
+        const raw = localStorage.getItem(STORAGE_KEY_CYCLE_START);
+        return raw ? Number(raw) : new Date().getFullYear();
+    } catch {
+        return new Date().getFullYear();
+    }
+}
+
 let entryIdCounter = 0;
 
 /**
@@ -465,14 +488,30 @@ export default function CECreditCalculator() {
     const [isFullDay, setIsFullDay] = useState(false);
     const [description, setDescription] = useState('');
     const [activityMonth, setActivityMonth] = useState('');
-    const [cycleStartYear, setCycleStartYear] = useState(new Date().getFullYear());
+    const [cycleStartYear, setCycleStartYear] = useState(loadCycleStartYear);
 
     // Calendar year for the currently selected year tab
     const calendarYear = cycleStartYear + selectedYear - 1;
     const yearLabel = (y) => `${cycleStartYear + y - 1}`;
 
-    // ── Entries (ledger) ──
-    const [entries, dispatch] = useReducer(entriesReducer, []);
+    // ── Entries (ledger) — initialized from localStorage ──
+    const [entries, dispatch] = useReducer(entriesReducer, null, () => {
+        const saved = loadSavedEntries();
+        // Resume ID counter so new entries don't collide with saved ones
+        if (saved.length > 0) {
+            entryIdCounter = Math.max(...saved.map((e) => e.id));
+        }
+        return saved;
+    });
+
+    // ── Persist entries and cycleStartYear to localStorage ──
+    useEffect(() => {
+        localStorage.setItem(STORAGE_KEY_ENTRIES, JSON.stringify(entries));
+    }, [entries]);
+
+    useEffect(() => {
+        localStorage.setItem(STORAGE_KEY_CYCLE_START, String(cycleStartYear));
+    }, [cycleStartYear]);
 
     // ── Derived data ──
     const filteredActivities = useMemo(
